@@ -11,9 +11,25 @@ const {
     ActionRowBuilder,
     StringSelectMenuBuilder,
 } = require('discord.js');
-const TelegramBot = require('node-telegram-bot-api');
 
-const telegram = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: false });
+// --- Telegram (sin librería, usando fetch nativo) ---
+async function enviarTelegram(texto) {
+    const url = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`;
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            chat_id: process.env.TELEGRAM_CHAT_ID,
+            text: texto,
+            parse_mode: 'Markdown',
+        }),
+    });
+    if (!res.ok) {
+        const detalle = await res.text();
+        throw new Error(`Telegram error ${res.status}: ${detalle}`);
+    }
+    return res.json();
+}
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -175,9 +191,7 @@ client.on('interactionCreate', async (interaction) => {
             `💬 *Notas:* ${datos.mensaje}`;
 
         try {
-            await telegram.sendMessage(process.env.TELEGRAM_CHAT_ID, texto, {
-                parse_mode: 'Markdown',
-            });
+            await enviarTelegram(texto);
             pendingForms.delete(interaction.user.id);
 
             await interaction.update({
