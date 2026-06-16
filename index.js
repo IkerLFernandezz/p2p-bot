@@ -11,8 +11,12 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    StringSelectMenuBuilder,
 } = require('discord.js');
+
+// Escapa los caracteres especiales de Markdown para que Telegram no falle
+function escaparMarkdown(texto) {
+    return String(texto).replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+}
 
 // --- Telegram (sin librería, usando fetch nativo) ---
 async function enviarTelegram(texto) {
@@ -23,7 +27,7 @@ async function enviarTelegram(texto) {
         body: JSON.stringify({
             chat_id: process.env.TELEGRAM_CHAT_ID,
             text: texto,
-            parse_mode: 'Markdown',
+            parse_mode: 'MarkdownV2',
         }),
     });
     if (!res.ok) {
@@ -35,9 +39,6 @@ async function enviarTelegram(texto) {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-const pendingForms = new Map();
-
-// Mantenemos /formulario como respaldo, pero el uso principal es el botón fijo
 const commands = [
     new SlashCommandBuilder()
         .setName('formulario')
@@ -57,8 +58,7 @@ async function registerCommands() {
     console.log('Comando registrado.');
 }
 
-// Publica (una sola vez) el mensaje fijo con el botón en el canal configurado.
-// Antes de publicar, borra mensajes anteriores del bot para no duplicar el botón.
+// Publica el mensaje fijo con el botón en el canal configurado.
 async function publicarBotonFijo() {
     try {
         const canal = await client.channels.fetch(process.env.DISCORD_CHANNEL_ID);
@@ -67,7 +67,6 @@ async function publicarBotonFijo() {
             return;
         }
 
-        // Limpia mensajes previos del propio bot (botones antiguos)
         const mensajes = await canal.messages.fetch({ limit: 20 });
         const mios = mensajes.filter((m) => m.author.id === client.user.id);
         for (const m of mios.values()) {
@@ -96,31 +95,39 @@ async function publicarBotonFijo() {
     }
 }
 
-function generarOpcionesFecha() {
-    const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    const meses = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    const opciones = [];
-    const hoy = new Date();
-
-    for (let i = 0; i < 25; i++) {
-        const fecha = new Date(hoy);
-        fecha.setDate(hoy.getDate() + i);
-
-        const yyyy = fecha.getFullYear();
-        const mm = String(fecha.getMonth() + 1).padStart(2, '0');
-        const dd = String(fecha.getDate()).padStart(2, '0');
-        const valor = `${yyyy}-${mm}-${dd}`;
-
-        let etiqueta = `${dias[fecha.getDay()]} ${dd} ${meses[fecha.getMonth()]} ${yyyy}`;
-        if (i === 0) etiqueta = `Hoy · ${etiqueta}`;
-        if (i === 1) etiqueta = `Mañana · ${etiqueta}`;
-
-        opciones.push({ label: etiqueta, value: valor });
+// Valida una fecha en formato DD/MM/AAAA. Devuelve {ok, valor} o {ok:false, error}
+function validarFecha(entrada) {
+    const limpio = entrada.trim();
+    const m = limpio.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+    if (!m) {
+        return { ok: false, error: 'El formato debe ser DD/MM/AAAA. Ejemplo: 25/12/2026' };
     }
-    return opciones;
+
+    const dia = parseInt(m[1], 10);
+    const mes = parseInt(m[2], 10);
+    const anio = parseInt(m[3], 10);
+
+    if (mes < 1 || mes > 12) return { ok: false, error: 'El mes debe estar entre 01 y 12.' };
+    if (dia < 1 || dia > 31) return { ok: false, error: 'El día no es válido.' };
+
+    const fecha = new Date(anio, mes - 1, dia);
+    // Comprueba que la fecha exista de verdad (ej: 31/02 no existe)
+    if (fecha.getDate() !== dia || fecha.getMonth() !== mes - 1 || fecha.getFullYear() !== anio) {
+        return { ok: false, error: 'Esa fecha no existe. Revísala (ejemplo válido: 25/12/2026).' };
+    }
+
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    if (fecha < hoy) {
+        return { ok: false, error: 'La fecha no puede ser anterior a hoy.' };
+    }
+
+    const dd = String(dia).padStart(2, '0');
+    const mm = String(mes).padStart(2, '0');
+    return { ok: true, valor: `${dd}/${mm}/${anio}` };
 }
 
-// Construye el modal del formulario (reutilizado por el botón y por /formulario)
+// Construye el modal del formulario, con la fecha como campo de texto
 function construirModal() {
     const modal = new ModalBuilder()
         .setCustomId('form_modal')
@@ -146,6 +153,13 @@ function construirModal() {
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
 
+    const fecha = new TextInputBuilder()
+        .setCustomId('fecha')
+        .setLabel('Fecha (DD/MM/AAAA)')
+        .setPlaceholder('Ej: 25/12/2026')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
     const mensaje = new TextInputBuilder()
         .setCustomId('mensaje')
         .setLabel('Nota adicional (opcional)')
@@ -156,6 +170,7 @@ function construirModal() {
         new ActionRowBuilder().addComponents(nombre),
         new ActionRowBuilder().addComponents(usuario),
         new ActionRowBuilder().addComponents(cantidad),
+        new ActionRowBuilder().addComponents(fecha),
         new ActionRowBuilder().addComponents(mensaje)
     );
 
@@ -182,90 +197,65 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // Procesar el modal → validar → pedir fecha
+    // Procesar el modal → validar todo → enviar a Telegram
     if (interaction.isModalSubmit() && interaction.customId === 'form_modal') {
         const nombre = interaction.fields.getTextInputValue('nombre');
         const usuario = interaction.fields.getTextInputValue('usuario');
         const cantidadRaw = interaction.fields.getTextInputValue('cantidad');
+        const fechaRaw = interaction.fields.getTextInputValue('fecha');
         const mensaje = interaction.fields.getTextInputValue('mensaje') || '(sin notas)';
 
+        // Validar cantidad
         const cantidadNum = parseFloat(cantidadRaw.replace(',', '.').replace(/[^\d.]/g, ''));
         if (isNaN(cantidadNum) || cantidadNum <= 0) {
             await interaction.reply({
-                content: '❌ La cantidad introducida no es válida. Usa solo números (ej: 1500).',
+                content: '❌ La **cantidad** no es válida. Usa solo números (ejemplo: 1500). Vuelve a pulsar el botón e inténtalo de nuevo.',
                 ephemeral: true,
             });
             return;
         }
 
-        pendingForms.set(interaction.user.id, {
-            nombre,
-            usuario,
-            cantidad: cantidadNum,
-            mensaje,
-        });
-
-        const selectFecha = new StringSelectMenuBuilder()
-            .setCustomId('select_fecha')
-            .setPlaceholder('📅 Selecciona la fecha de la operación')
-            .addOptions(generarOpcionesFecha());
-
-        await interaction.reply({
-            content:
-                '🔴 **IMPORTANTE — LEE ANTES DE CONTINUAR** 🔴\n\n' +
-                '# ⚠️ EL P2P ES EN PERSONA, OBLIGATORIAMENTE ⚠️\n' +
-                '## 📍 TÚ DEBES DESPLAZARTE A **VALENCIA, ESPAÑA** PARA REALIZARLO.\n\n' +
-                '## 💵 SOLO DAMOS EFECTIVO — NO RECIBIMOS EFECTIVO POR EL MOMENTO.\n\n' +
-                'No se realizan operaciones a distancia bajo ningún concepto.\n\n' +
-                '👇 Si estás de acuerdo, **selecciona la fecha** en la que acudirás:',
-            components: [new ActionRowBuilder().addComponents(selectFecha)],
-            ephemeral: true,
-        });
-        return;
-    }
-
-    // El usuario elige fecha → enviar a Telegram
-    if (interaction.isStringSelectMenu() && interaction.customId === 'select_fecha') {
-        const datos = pendingForms.get(interaction.user.id);
-        if (!datos) {
+        // Validar fecha
+        const fechaCheck = validarFecha(fechaRaw);
+        if (!fechaCheck.ok) {
             await interaction.reply({
-                content: '❌ La sesión expiró. Vuelve a pulsar el botón del formulario.',
+                content: `❌ La **fecha** no es válida: ${fechaCheck.error}\n\nVuelve a pulsar el botón e inténtalo de nuevo.`,
                 ephemeral: true,
             });
             return;
         }
+        const fecha = fechaCheck.valor;
 
-        const fecha = interaction.values[0];
-
+        // Construir mensaje para Telegram (datos del usuario escapados)
         const texto =
             `📋 *NUEVA OPERACIÓN P2P*\n\n` +
-            `👤 *Usuario Discord (cuenta):* ${interaction.user.tag}\n` +
-            `📝 *Nombre:* ${datos.nombre}\n` +
-            `💬 *Usuario indicado:* ${datos.usuario}\n` +
-            `💶 *Cantidad:* ${datos.cantidad.toLocaleString('es-ES')} €\n` +
-            `📅 *Fecha acordada:* ${fecha}\n` +
-            `📍 *Lugar:* VALENCIA, ESPAÑA (en persona)\n` +
-            `💵 *Modalidad:* SOLO DAMOS EFECTIVO (no recibimos efectivo)\n` +
-            `🗒️ *Nota:* ${datos.mensaje}`;
+            `👤 *Usuario Discord \\(cuenta\\):* ${escaparMarkdown(interaction.user.tag)}\n` +
+            `📝 *Nombre:* ${escaparMarkdown(nombre)}\n` +
+            `💬 *Usuario indicado:* ${escaparMarkdown(usuario)}\n` +
+            `💶 *Cantidad:* ${escaparMarkdown(cantidadNum.toLocaleString('es-ES'))} €\n` +
+            `📅 *Fecha acordada:* ${escaparMarkdown(fecha)}\n` +
+            `📍 *Lugar:* VALENCIA, ESPAÑA \\(en persona\\)\n` +
+            `💵 *Modalidad:* SOLO DAMOS EFECTIVO \\(no recibimos efectivo\\)\n` +
+            `🗒️ *Nota:* ${escaparMarkdown(mensaje)}`;
 
         try {
             await enviarTelegram(texto);
-            pendingForms.delete(interaction.user.id);
 
-            await interaction.update({
+            await interaction.reply({
                 content:
                     `✅ **¡Operación registrada correctamente!**\n\n` +
-                    `📅 Fecha: **${fecha}**\n` +
-                    `💶 Cantidad: **${datos.cantidad.toLocaleString('es-ES')} €**\n\n` +
+                    `📝 Nombre: **${nombre}**\n` +
+                    `💶 Cantidad: **${cantidadNum.toLocaleString('es-ES')} €**\n` +
+                    `📅 Fecha: **${fecha}**\n\n` +
                     `📍 Recuerda: debes acudir **EN PERSONA a VALENCIA, ESPAÑA**.\n` +
                     `💵 Modalidad: **solo damos efectivo** (no recibimos efectivo).`,
-                components: [],
+                ephemeral: true,
             });
         } catch (err) {
             console.error('Error enviando a Telegram:', err);
-            await interaction.update({
-                content: '❌ Hubo un error al registrar la operación. Inténtalo de nuevo.',
-                components: [],
+            await interaction.reply({
+                content: '❌ Hubo un error al registrar la operación. Inténtalo de nuevo en unos minutos.',
+                ephemeral: true,
             });
         }
         return;
