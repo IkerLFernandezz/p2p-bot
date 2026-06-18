@@ -19,7 +19,7 @@ const {
 //  CONFIGURACIÓN
 // ============================================================
 const COOLDOWN_MS = 3 * 60 * 1000;      // 1 solicitud cada 3 min por usuario
-const CANTIDAD_MIN = 10;                // € mínimo aceptado
+const CANTIDAD_MIN = 500;                // € mínimo aceptado
 const CANTIDAD_MAX = 1000000;           // € máximo aceptado
 const REGISTRO_PATH = path.join(__dirname, 'operaciones.jsonl');
 const FALLOS_PATH = path.join(__dirname, 'operaciones_fallidas.jsonl');
