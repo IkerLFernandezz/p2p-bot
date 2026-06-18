@@ -140,12 +140,12 @@ async function publicarBotonFijo() {
 
         await canal.send({
             content:
-                '# 🪙 FORMULARIO DE OPERACIÓN P2P\n\n' +
-                '## ⚠️ LEE ANTES DE EMPEZAR:\n' +
-                '### 📍 El P2P se realiza **EN PERSONA** y **OBLIGATORIAMENTE EN VALENCIA, ESPAÑA**.\n' +
-                '### 💵 **SOLO DAMOS EFECTIVO** — NO recibimos efectivo por el momento.\n\n' +
-                'No se realizan operaciones a distancia bajo ningún concepto.\n\n' +
-                '👇 **Pulsa el botón verde de abajo para rellenar tu solicitud:**',
+                '# 🪙 Formulario de operación P2P\n\n' +
+                'Antes de rellenar la solicitud, lee estas **3 condiciones**:\n\n' +
+                '📍 **Solo en persona** — La operación se hace presencialmente en **Valencia (España)**. No operamos a distancia bajo ningún concepto.\n\n' +
+                '💵 **Solo entregamos efectivo a cambio de USDT** — Te damos el dinero en mano. Por ahora **no aceptamos** efectivo por nuestra parte.\n\n' +
+                '💶 **Importe** — Entre **' + CANTIDAD_MIN + '€** y **' + CANTIDAD_MAX + '** por operación.\n\n' +
+                '👇 Pulsa el botón verde para empezar.',
             components: [new ActionRowBuilder().addComponents(boton)],
         });
 
@@ -260,7 +260,7 @@ function construirModal() {
 
     const usuario = new TextInputBuilder()
         .setCustomId('usuario')
-        .setLabel('Tu usuario de Discord')
+        .setLabel('Usuario o contacto de Discord')
         .setPlaceholder('Ej: brann0490')
         .setStyle(TextInputStyle.Short)
         .setMaxLength(100)
@@ -268,15 +268,15 @@ function construirModal() {
 
     const cantidad = new TextInputBuilder()
         .setCustomId('cantidad')
-        .setLabel('Cantidad en dinero (€)')
-        .setPlaceholder('Ej: 1500')
+        .setLabel('Cantidad que necesitas (€)')
+        .setPlaceholder('Entre 500 y 1.000.000')
         .setStyle(TextInputStyle.Short)
         .setMaxLength(20)
         .setRequired(true);
 
     const fecha = new TextInputBuilder()
         .setCustomId('fecha')
-        .setLabel('Fecha (DD/MM/AAAA)')
+        .setLabel('Fecha deseada (DD/MM/AAAA)')
         .setPlaceholder('Ej: 25/12/2026')
         .setStyle(TextInputStyle.Short)
         .setMaxLength(10)
@@ -284,7 +284,7 @@ function construirModal() {
 
     const mensaje = new TextInputBuilder()
         .setCustomId('mensaje')
-        .setLabel('Nota adicional (opcional)')
+        .setLabel('¿Algo más que debamos saber?')
         .setStyle(TextInputStyle.Paragraph)
         .setMaxLength(500)
         .setRequired(false);
@@ -352,7 +352,10 @@ client.on('interactionCreate', async (interaction) => {
             const cantidadCheck = validarCantidad(cantidadRaw);
             if (!cantidadCheck.ok) {
                 await interaction.reply({
-                    content: `❌ La **cantidad** no es válida: ${cantidadCheck.error}\n\nVuelve a pulsar el botón e inténtalo de nuevo.`,
+                    content:
+                        `❌ **Cantidad no válida**\n` +
+                        `${cantidadCheck.error}\n\n` +
+                        `🔁 Pulsa otra vez el botón verde para volver a intentarlo.`,
                     ephemeral: true,
                 });
                 return;
@@ -393,14 +396,15 @@ client.on('interactionCreate', async (interaction) => {
 
             await interaction.reply({
                 content:
-                    '## 📋 Revisa tu solicitud antes de enviar:\n\n' +
+                    '## 📋 Revisa tu solicitud\n\n' +
                     `📝 **Nombre:** ${nombre}\n` +
-                    `💬 **Usuario Discord:** ${usuario}\n` +
+                    `💬 **Discord:** ${usuario}\n` +
                     `💶 **Cantidad:** ${cantidadNum.toLocaleString('es-ES')} €\n` +
                     `📅 **Fecha:** ${fecha}\n` +
                     `🗒️ **Nota:** ${mensaje}\n\n` +
-                    '📍 Recuerda: **EN PERSONA, en VALENCIA (España)**. 💵 **Solo damos efectivo.**\n\n' +
-                    '¿Es todo correcto?',
+                    '📍 Recuerda: la entrega es **en persona, en Valencia (España)** y **solo entregamos efectivo a cambio de USDT**.\n\n' +
+                    '✅ Si todo está bien, pulsa **Confirmar**.\n' +
+                    '❌ Si quieres cambiar algo, pulsa **Cancelar** y vuelve a empezar.',
                 components: [new ActionRowBuilder().addComponents(confirmar, cancelar)],
                 ephemeral: true,
             });
@@ -456,12 +460,13 @@ client.on('interactionCreate', async (interaction) => {
 
                 await interaction.update({
                     content:
-                        `✅ **¡Operación registrada y enviada correctamente!**\n\n` +
+                        `✅ **¡Solicitud enviada correctamente!**\n\n` +
                         `📝 Nombre: **${datos.nombre}**\n` +
                         `💶 Cantidad: **${datos.cantidad.toLocaleString('es-ES')} €**\n` +
                         `📅 Fecha: **${datos.fecha}**\n\n` +
-                        `📍 Recuerda: debes acudir **EN PERSONA a VALENCIA, ESPAÑA**.\n` +
-                        `💵 Modalidad: **solo damos efectivo** (no recibimos efectivo).`,
+                        `📍 La operación será **en persona, en Valencia (España)**.\n` +
+                        `💵 Modalidad: **solo entregamos efectivo**.\n\n` +
+                        `📨 **Nos pondremos en contacto contigo** para confirmar el punto y la hora exactos.`,
                     components: [],
                 });
             } catch (err) {
