@@ -13,6 +13,7 @@ const {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
+    StringSelectMenuBuilder,
 } = require('discord.js');
 
 // ============================================================
@@ -23,6 +24,12 @@ const CANTIDAD_MIN = 500;                // € mínimo aceptado
 const CANTIDAD_MAX = 1000000;           // € máximo aceptado
 const REGISTRO_PATH = path.join(__dirname, 'operaciones.jsonl');
 const FALLOS_PATH = path.join(__dirname, 'operaciones_fallidas.jsonl');
+
+// Las dos modalidades posibles del selector
+const MODALIDADES = {
+    efectivo_usdt: 'Efectivo → USDT',
+    usdt_efectivo: 'USDT → Efectivo',
+};
 
 // ============================================================
 //  UTILIDADES
@@ -77,7 +84,7 @@ function comprobarCooldown(userId) {
     return { permitido: true };
 }
 
-// Guarda temporalmente lo que el usuario rellenó, a la espera de confirmación
+// Guarda temporalmente lo que el usuario rellenó, a la espera de selector + confirmación
 const pendientesConfirmacion = new Map(); // userId -> datos
 
 // ============================================================
@@ -113,7 +120,6 @@ async function publicarBotonFijo() {
             return;
         }
 
-        // ¿Ya existe un botón válido del bot? Si es así, no republicamos.
         const mensajes = await canal.messages.fetch({ limit: 30 });
         const existente = mensajes.find(
             (m) =>
@@ -127,7 +133,6 @@ async function publicarBotonFijo() {
             return;
         }
 
-        // Limpia otros mensajes sueltos del bot (sin botón) para no dejar basura
         const mios = mensajes.filter((m) => m.author.id === client.user.id);
         for (const m of mios.values()) {
             await m.delete().catch(() => { });
@@ -140,12 +145,12 @@ async function publicarBotonFijo() {
 
         await canal.send({
             content:
-                '# 🪙 Formulario de operación P2P\n\n' +
-                'Antes de rellenar la solicitud, lee estas **3 condiciones**:\n\n' +
-                '📍 **Solo en persona** — La operación se hace presencialmente en **Valencia (España)**. No operamos a distancia bajo ningún concepto.\n\n' +
-                '💵 **Solo entregamos efectivo a cambio de USDT** — Te damos el dinero en mano. Por ahora **no aceptamos** efectivo por nuestra parte.\n\n' +
-                '💶 **Importe** — Entre **' + CANTIDAD_MIN + '€** y **' + CANTIDAD_MAX + '** por operación.\n\n' +
-                '👇 Pulsa el botón verde para empezar.',
+                '# 🪙 FORMULARIO DE OPERACIÓN P2P\n\n' +
+                '## ⚠️ LEE ANTES DE EMPEZAR:\n\n' +
+                '📍 El P2P se realiza **en persona** y **obligatoriamente en Valencia, España**.\n\n' +
+                '💵 **Solo damos efectivo.** No recibimos efectivo por el momento.\n\n' +
+                '🚫 No se realizan operaciones a distancia bajo ningún concepto.\n\n' +
+                '👇 Pulsa el botón de abajo para rellenar tu solicitud.',
             components: [new ActionRowBuilder().addComponents(boton)],
         });
 
@@ -159,7 +164,6 @@ async function publicarBotonFijo() {
 //  VALIDACIONES
 // ============================================================
 
-// Valida una fecha en formato DD/MM/AAAA. Devuelve {ok, valor} o {ok:false, error}
 function validarFecha(entrada) {
     const limpio = entrada.trim();
     const m = limpio.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
@@ -185,7 +189,6 @@ function validarFecha(entrada) {
         return { ok: false, error: 'La fecha no puede ser anterior a hoy.' };
     }
 
-    // No permitir fechas absurdamente lejanas (más de 1 año)
     const limite = new Date(hoy);
     limite.setFullYear(limite.getFullYear() + 1);
     if (fecha > limite) {
@@ -197,8 +200,6 @@ function validarFecha(entrada) {
     return { ok: true, valor: `${dd}/${mm}/${anio}` };
 }
 
-// Valida e interpreta la cantidad. Acepta formatos español (1.500,50) e inglés (1500.50).
-// Devuelve {ok, valor} (número) o {ok:false, error}
 function validarCantidad(entrada) {
     let limpio = entrada.trim().replace(/[€\s]/g, '');
 
@@ -210,21 +211,15 @@ function validarCantidad(entrada) {
     const tienePunto = limpio.includes('.');
 
     if (tieneComa && tienePunto) {
-        // Formato español: el punto es separador de miles, la coma es decimal
         limpio = limpio.replace(/\./g, '').replace(',', '.');
     } else if (tieneComa) {
-        // Solo coma → decimal español
         limpio = limpio.replace(',', '.');
     } else if (tienePunto) {
-        // Solo punto: ambiguo. Si son grupos de 3 dígitos (1.500 o 1.234.567),
-        // se trata como separador de miles. Si no (1500.50), como decimal inglés.
         if (/^\d{1,3}(\.\d{3})+$/.test(limpio)) {
             limpio = limpio.replace(/\./g, '');
         }
-        // En cualquier otro caso (ej: 1500.50) se deja como decimal.
     }
 
-    // Tras normalizar solo debe quedar dígitos y como mucho un punto decimal
     if (!/^\d+(\.\d+)?$/.test(limpio)) {
         return { ok: false, error: 'La cantidad tiene un formato extraño. Usa solo números (ejemplo: 1500).' };
     }
@@ -269,7 +264,7 @@ function construirModal() {
     const cantidad = new TextInputBuilder()
         .setCustomId('cantidad')
         .setLabel('Cantidad que necesitas (€)')
-        .setPlaceholder('Entre 500 y 1.000.000')
+        .setPlaceholder('Minimo 500')
         .setStyle(TextInputStyle.Short)
         .setMaxLength(20)
         .setRequired(true);
@@ -298,6 +293,36 @@ function construirModal() {
     );
 
     return modal;
+}
+
+// Construye el bloque de confirmación (resumen + botones). Reutilizado tras elegir modalidad.
+function construirConfirmacion(datos) {
+    const confirmar = new ButtonBuilder()
+        .setCustomId('confirmar_envio')
+        .setLabel('✅ Confirmar y enviar')
+        .setStyle(ButtonStyle.Success);
+
+    const cancelar = new ButtonBuilder()
+        .setCustomId('cancelar_envio')
+        .setLabel('❌ Cancelar')
+        .setStyle(ButtonStyle.Danger);
+
+    const contenido =
+        '## 📋 Revisa tu solicitud\n\n' +
+        `📝 **Nombre:** ${datos.nombre}\n` +
+        `💬 **Discord:** ${datos.usuario}\n` +
+        `💶 **Cantidad:** ${datos.cantidad.toLocaleString('es-ES')} €\n` +
+        `📅 **Fecha:** ${datos.fecha}\n` +
+        `🔄 **Modalidad:** ${MODALIDADES[datos.modalidad]}\n` +
+        `🗒️ **Nota:** ${datos.mensaje}\n\n` +
+        '📍 Recuerda: la entrega es **en persona, en Valencia (España)**.\n\n' +
+        '✅ Si todo está bien, pulsa **Confirmar**.\n' +
+        '❌ Si quieres cambiar algo, pulsa **Cancelar** y vuelve a empezar.';
+
+    return {
+        content: contenido,
+        components: [new ActionRowBuilder().addComponents(confirmar, cancelar)],
+    };
 }
 
 // ============================================================
@@ -340,7 +365,7 @@ client.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        // --- Envío del modal: validar y mostrar confirmación ---
+        // --- Envío del modal: validar y pedir la MODALIDAD (selector) ---
         if (interaction.isModalSubmit() && interaction.customId === 'form_modal') {
             const nombre = interaction.fields.getTextInputValue('nombre').trim();
             const usuario = interaction.fields.getTextInputValue('usuario').trim();
@@ -348,7 +373,6 @@ client.on('interactionCreate', async (interaction) => {
             const fechaRaw = interaction.fields.getTextInputValue('fecha');
             const mensaje = interaction.fields.getTextInputValue('mensaje').trim() || '(sin notas)';
 
-            // Validar cantidad
             const cantidadCheck = validarCantidad(cantidadRaw);
             if (!cantidadCheck.ok) {
                 await interaction.reply({
@@ -362,7 +386,6 @@ client.on('interactionCreate', async (interaction) => {
             }
             const cantidadNum = cantidadCheck.valor;
 
-            // Validar fecha
             const fechaCheck = validarFecha(fechaRaw);
             if (!fechaCheck.ok) {
                 await interaction.reply({
@@ -373,41 +396,52 @@ client.on('interactionCreate', async (interaction) => {
             }
             const fecha = fechaCheck.valor;
 
-            // Guardar a la espera de confirmación
+            // Guardar datos a la espera de que elija modalidad
             pendientesConfirmacion.set(interaction.user.id, {
                 nombre,
                 usuario,
                 cantidad: cantidadNum,
                 fecha,
                 mensaje,
+                modalidad: null, // se rellena con el selector
                 discordUsername: interaction.user.username,
                 discordId: interaction.user.id,
             });
 
-            const confirmar = new ButtonBuilder()
-                .setCustomId('confirmar_envio')
-                .setLabel('✅ Confirmar y enviar')
-                .setStyle(ButtonStyle.Success);
-
-            const cancelar = new ButtonBuilder()
-                .setCustomId('cancelar_envio')
-                .setLabel('❌ Cancelar')
-                .setStyle(ButtonStyle.Danger);
+            const selector = new StringSelectMenuBuilder()
+                .setCustomId('select_modalidad')
+                .setPlaceholder('🔄 Elige el tipo de operación')
+                .addOptions(
+                    { label: 'Efectivo → USDT', value: 'efectivo_usdt', description: 'Tú entregas efectivo y recibes USDT' },
+                    { label: 'USDT → Efectivo', value: 'usdt_efectivo', description: 'Tú entregas USDT y recibes efectivo' }
+                );
 
             await interaction.reply({
                 content:
-                    '## 📋 Revisa tu solicitud\n\n' +
-                    `📝 **Nombre:** ${nombre}\n` +
-                    `💬 **Discord:** ${usuario}\n` +
-                    `💶 **Cantidad:** ${cantidadNum.toLocaleString('es-ES')} €\n` +
-                    `📅 **Fecha:** ${fecha}\n` +
-                    `🗒️ **Nota:** ${mensaje}\n\n` +
-                    '📍 Recuerda: la entrega es **en persona, en Valencia (España)** y **solo entregamos efectivo a cambio de USDT**.\n\n' +
-                    '✅ Si todo está bien, pulsa **Confirmar**.\n' +
-                    '❌ Si quieres cambiar algo, pulsa **Cancelar** y vuelve a empezar.',
-                components: [new ActionRowBuilder().addComponents(confirmar, cancelar)],
+                    '## 🔄 ¿Qué tipo de operación quieres hacer?\n\n' +
+                    'Elige en el menú de abajo la dirección de tu intercambio:',
+                components: [new ActionRowBuilder().addComponents(selector)],
                 ephemeral: true,
             });
+            return;
+        }
+
+        // --- Selección de modalidad → mostrar confirmación ---
+        if (interaction.isStringSelectMenu() && interaction.customId === 'select_modalidad') {
+            const datos = pendientesConfirmacion.get(interaction.user.id);
+            if (!datos) {
+                await interaction.update({
+                    content: '❌ La sesión expiró. Vuelve a pulsar el botón del formulario.',
+                    components: [],
+                });
+                return;
+            }
+
+            datos.modalidad = interaction.values[0];
+            pendientesConfirmacion.set(interaction.user.id, datos);
+
+            const conf = construirConfirmacion(datos);
+            await interaction.update(conf);
             return;
         }
 
@@ -434,10 +468,10 @@ client.on('interactionCreate', async (interaction) => {
 
             const registro = {
                 ...datos,
+                modalidadTexto: MODALIDADES[datos.modalidad],
                 timestamp: new Date().toISOString(),
             };
 
-            // 1) Guardar SIEMPRE antes de enviar (no perder la operación)
             guardarRegistro(REGISTRO_PATH, registro);
 
             const texto =
@@ -447,14 +481,13 @@ client.on('interactionCreate', async (interaction) => {
                 `💬 *Usuario indicado:* ${escaparMarkdown(datos.usuario)}\n` +
                 `💶 *Cantidad:* ${escaparMarkdown(datos.cantidad.toLocaleString('es-ES'))} €\n` +
                 `📅 *Fecha acordada:* ${escaparMarkdown(datos.fecha)}\n` +
+                `🔄 *Modalidad:* ${escaparMarkdown(MODALIDADES[datos.modalidad])}\n` +
                 `📍 *Lugar:* VALENCIA, ESPAÑA \\(en persona\\)\n` +
-                `💵 *Modalidad:* SOLO DAMOS EFECTIVO \\(no recibimos efectivo\\)\n` +
                 `🗒️ *Nota:* ${escaparMarkdown(datos.mensaje)}`;
 
             try {
                 await enviarTelegram(texto);
 
-                // Marcar cooldown solo tras envío correcto
                 cooldowns.set(interaction.user.id, Date.now());
                 pendientesConfirmacion.delete(interaction.user.id);
 
@@ -463,15 +496,14 @@ client.on('interactionCreate', async (interaction) => {
                         `✅ **¡Solicitud enviada correctamente!**\n\n` +
                         `📝 Nombre: **${datos.nombre}**\n` +
                         `💶 Cantidad: **${datos.cantidad.toLocaleString('es-ES')} €**\n` +
-                        `📅 Fecha: **${datos.fecha}**\n\n` +
-                        `📍 La operación será **en persona, en Valencia (España)**.\n` +
-                        `💵 Modalidad: **solo entregamos efectivo**.\n\n` +
+                        `📅 Fecha: **${datos.fecha}**\n` +
+                        `🔄 Modalidad: **${MODALIDADES[datos.modalidad]}**\n\n` +
+                        `📍 La operación será **en persona, en Valencia (España)**.\n\n` +
                         `📨 **Nos pondremos en contacto contigo** para confirmar el punto y la hora exactos.`,
                     components: [],
                 });
             } catch (err) {
                 console.error('Error enviando a Telegram:', err.message);
-                // 2) Registrar el fallo aparte para no perder nada
                 guardarRegistro(FALLOS_PATH, { ...registro, error: err.message });
 
                 await interaction.update({
@@ -484,7 +516,6 @@ client.on('interactionCreate', async (interaction) => {
             return;
         }
     } catch (err) {
-        // Red de seguridad: cualquier error inesperado no debe tumbar el bot
         console.error('Error inesperado en interactionCreate:', err);
         if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
             await interaction.reply({
