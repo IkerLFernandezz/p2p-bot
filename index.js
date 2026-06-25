@@ -264,7 +264,7 @@ function construirModal() {
     const cantidad = new TextInputBuilder()
         .setCustomId('cantidad')
         .setLabel('Cantidad que necesitas (€)')
-        .setPlaceholder('Entre 500 y 1.000.000')
+        .setPlaceholder('Minimo 500')
         .setStyle(TextInputStyle.Short)
         .setMaxLength(20)
         .setRequired(true);
