@@ -84,7 +84,10 @@ function comprobarCooldown(userId) {
     return { permitido: true };
 }
 
-// Guarda temporalmente lo que el usuario rellenó, a la espera de selector + confirmación
+// Guarda temporalmente la modalidad elegida antes de abrir el modal
+const modalidadPendiente = new Map(); // userId -> modalidad elegida
+
+// Guarda temporalmente lo que el usuario rellenó, a la espera de confirmación
 const pendientesConfirmacion = new Map(); // userId -> datos
 
 // ============================================================
@@ -241,30 +244,15 @@ function validarCantidad(entrada) {
 // ============================================================
 //  MODAL
 // ============================================================
-function construirModal() {
+function construirModal(modalidad) {
     const modal = new ModalBuilder()
-        .setCustomId('form_modal')
-        .setTitle('Operación P2P · Cripto');
-
-    const nombre = new TextInputBuilder()
-        .setCustomId('nombre')
-        .setLabel('Tu nombre completo')
-        .setStyle(TextInputStyle.Short)
-        .setMaxLength(100)
-        .setRequired(true);
-
-    const usuario = new TextInputBuilder()
-        .setCustomId('usuario')
-        .setLabel('Usuario o contacto de Discord')
-        .setPlaceholder('Ej: brann0490')
-        .setStyle(TextInputStyle.Short)
-        .setMaxLength(100)
-        .setRequired(true);
+        .setCustomId(`form_modal_${modalidad}`)
+        .setTitle(`P2P · ${MODALIDADES[modalidad]}`);
 
     const cantidad = new TextInputBuilder()
         .setCustomId('cantidad')
         .setLabel('Cantidad que necesitas (€)')
-        .setPlaceholder('Minimo 500')
+        .setPlaceholder('Mínimo 500')
         .setStyle(TextInputStyle.Short)
         .setMaxLength(20)
         .setRequired(true);
@@ -285,8 +273,6 @@ function construirModal() {
         .setRequired(false);
 
     modal.addComponents(
-        new ActionRowBuilder().addComponents(nombre),
-        new ActionRowBuilder().addComponents(usuario),
         new ActionRowBuilder().addComponents(cantidad),
         new ActionRowBuilder().addComponents(fecha),
         new ActionRowBuilder().addComponents(mensaje)
@@ -295,7 +281,7 @@ function construirModal() {
     return modal;
 }
 
-// Construye el bloque de confirmación (resumen + botones). Reutilizado tras elegir modalidad.
+// Construye el bloque de confirmación (resumen + botones).
 function construirConfirmacion(datos) {
     const confirmar = new ButtonBuilder()
         .setCustomId('confirmar_envio')
@@ -309,8 +295,7 @@ function construirConfirmacion(datos) {
 
     const contenido =
         '## 📋 Revisa tu solicitud\n\n' +
-        `📝 **Nombre:** ${datos.nombre}\n` +
-        `💬 **Discord:** ${datos.usuario}\n` +
+        `💬 **Discord:** ${datos.discordUsername}\n` +
         `💶 **Cantidad:** ${datos.cantidad.toLocaleString('es-ES')} €\n` +
         `📅 **Fecha:** ${datos.fecha}\n` +
         `🔄 **Modalidad:** ${MODALIDADES[datos.modalidad]}\n` +
@@ -330,7 +315,7 @@ function construirConfirmacion(datos) {
 // ============================================================
 client.on('interactionCreate', async (interaction) => {
     try {
-        // --- Botón fijo: abrir formulario ---
+        // --- Botón fijo: mostrar selector de modalidad PRIMERO ---
         if (interaction.isButton() && interaction.customId === 'abrir_formulario') {
             const cd = comprobarCooldown(interaction.user.id);
             if (!cd.permitido) {
@@ -340,7 +325,22 @@ client.on('interactionCreate', async (interaction) => {
                 });
                 return;
             }
-            await interaction.showModal(construirModal());
+
+            const selector = new StringSelectMenuBuilder()
+                .setCustomId('select_modalidad_previa')
+                .setPlaceholder('🔄 Elige el tipo de operación')
+                .addOptions(
+                    { label: 'Efectivo → USDT', value: 'efectivo_usdt', description: 'Tú entregas efectivo y recibes USDT' },
+                    { label: 'USDT → Efectivo', value: 'usdt_efectivo', description: 'Tú entregas USDT y recibes efectivo' }
+                );
+
+            await interaction.reply({
+                content:
+                    '## 🔄 ¿Qué tipo de operación quieres hacer?\n\n' +
+                    'Elige primero la dirección de tu intercambio y después se abrirá el formulario:',
+                components: [new ActionRowBuilder().addComponents(selector)],
+                ephemeral: true,
+            });
             return;
         }
 
@@ -361,14 +361,45 @@ client.on('interactionCreate', async (interaction) => {
                 });
                 return;
             }
-            await interaction.showModal(construirModal());
+
+            const selector = new StringSelectMenuBuilder()
+                .setCustomId('select_modalidad_previa')
+                .setPlaceholder('🔄 Elige el tipo de operación')
+                .addOptions(
+                    { label: 'Efectivo → USDT', value: 'efectivo_usdt', description: 'Tú entregas efectivo y recibes USDT' },
+                    { label: 'USDT → Efectivo', value: 'usdt_efectivo', description: 'Tú entregas USDT y recibes efectivo' }
+                );
+
+            await interaction.reply({
+                content:
+                    '## 🔄 ¿Qué tipo de operación quieres hacer?\n\n' +
+                    'Elige primero la dirección de tu intercambio y después se abrirá el formulario:',
+                components: [new ActionRowBuilder().addComponents(selector)],
+                ephemeral: true,
+            });
             return;
         }
 
-        // --- Envío del modal: validar y pedir la MODALIDAD (selector) ---
-        if (interaction.isModalSubmit() && interaction.customId === 'form_modal') {
-            const nombre = interaction.fields.getTextInputValue('nombre').trim();
-            const usuario = interaction.fields.getTextInputValue('usuario').trim();
+        // --- Selector previo: guarda modalidad y abre el modal ---
+        if (interaction.isStringSelectMenu() && interaction.customId === 'select_modalidad_previa') {
+            const modalidad = interaction.values[0];
+            modalidadPendiente.set(interaction.user.id, modalidad);
+            // showModal no admite update, hay que responder con el modal directamente
+            await interaction.showModal(construirModal(modalidad));
+            return;
+        }
+
+        // --- Envío del modal: validar y mostrar confirmación ---
+        if (interaction.isModalSubmit() && interaction.customId.startsWith('form_modal_')) {
+            const modalidad = modalidadPendiente.get(interaction.user.id);
+            if (!modalidad) {
+                await interaction.reply({
+                    content: '❌ La sesión expiró. Vuelve a pulsar el botón del formulario.',
+                    ephemeral: true,
+                });
+                return;
+            }
+
             const cantidadRaw = interaction.fields.getTextInputValue('cantidad');
             const fechaRaw = interaction.fields.getTextInputValue('fecha');
             const mensaje = interaction.fields.getTextInputValue('mensaje').trim() || '(sin notas)';
@@ -396,52 +427,20 @@ client.on('interactionCreate', async (interaction) => {
             }
             const fecha = fechaCheck.valor;
 
-            // Guardar datos a la espera de que elija modalidad
-            pendientesConfirmacion.set(interaction.user.id, {
-                nombre,
-                usuario,
+            const datos = {
                 cantidad: cantidadNum,
                 fecha,
                 mensaje,
-                modalidad: null, // se rellena con el selector
+                modalidad,
                 discordUsername: interaction.user.username,
                 discordId: interaction.user.id,
-            });
+            };
 
-            const selector = new StringSelectMenuBuilder()
-                .setCustomId('select_modalidad')
-                .setPlaceholder('🔄 Elige el tipo de operación')
-                .addOptions(
-                    { label: 'Efectivo → USDT', value: 'efectivo_usdt', description: 'Tú entregas efectivo y recibes USDT' },
-                    { label: 'USDT → Efectivo', value: 'usdt_efectivo', description: 'Tú entregas USDT y recibes efectivo' }
-                );
-
-            await interaction.reply({
-                content:
-                    '## 🔄 ¿Qué tipo de operación quieres hacer?\n\n' +
-                    'Elige en el menú de abajo la dirección de tu intercambio:',
-                components: [new ActionRowBuilder().addComponents(selector)],
-                ephemeral: true,
-            });
-            return;
-        }
-
-        // --- Selección de modalidad → mostrar confirmación ---
-        if (interaction.isStringSelectMenu() && interaction.customId === 'select_modalidad') {
-            const datos = pendientesConfirmacion.get(interaction.user.id);
-            if (!datos) {
-                await interaction.update({
-                    content: '❌ La sesión expiró. Vuelve a pulsar el botón del formulario.',
-                    components: [],
-                });
-                return;
-            }
-
-            datos.modalidad = interaction.values[0];
             pendientesConfirmacion.set(interaction.user.id, datos);
+            modalidadPendiente.delete(interaction.user.id);
 
             const conf = construirConfirmacion(datos);
-            await interaction.update(conf);
+            await interaction.reply({ ...conf, ephemeral: true });
             return;
         }
 
@@ -477,8 +476,6 @@ client.on('interactionCreate', async (interaction) => {
             const texto =
                 `📋 *NUEVA OPERACIÓN P2P*\n\n` +
                 `👤 *Discord:* ${escaparMarkdown(datos.discordUsername)} \\(ID: ${escaparMarkdown(datos.discordId)}\\)\n` +
-                `📝 *Nombre:* ${escaparMarkdown(datos.nombre)}\n` +
-                `💬 *Usuario indicado:* ${escaparMarkdown(datos.usuario)}\n` +
                 `💶 *Cantidad:* ${escaparMarkdown(datos.cantidad.toLocaleString('es-ES'))} €\n` +
                 `📅 *Fecha acordada:* ${escaparMarkdown(datos.fecha)}\n` +
                 `🔄 *Modalidad:* ${escaparMarkdown(MODALIDADES[datos.modalidad])}\n` +
@@ -494,7 +491,6 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.update({
                     content:
                         `✅ **¡Solicitud enviada correctamente!**\n\n` +
-                        `📝 Nombre: **${datos.nombre}**\n` +
                         `💶 Cantidad: **${datos.cantidad.toLocaleString('es-ES')} €**\n` +
                         `📅 Fecha: **${datos.fecha}**\n` +
                         `🔄 Modalidad: **${MODALIDADES[datos.modalidad]}**\n\n` +
