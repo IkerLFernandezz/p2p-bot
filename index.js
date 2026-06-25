@@ -148,7 +148,7 @@ async function publicarBotonFijo() {
                 '# 🪙 FORMULARIO DE OPERACIÓN P2P\n\n' +
                 '## ⚠️ LEE ANTES DE EMPEZAR:\n\n' +
                 '📍 El P2P se realiza **en persona** y **obligatoriamente en Valencia, España**.\n\n' +
-                '💵 **Solo damos efectivo.** No recibimos efectivo por el momento.\n\n' +
+                '🔄 Operamos en **ambas direcciones**: Efectivo → USDT y USDT → Efectivo.\n\n' +
                 '🚫 No se realizan operaciones a distancia bajo ningún concepto.\n\n' +
                 '👇 Pulsa el botón de abajo para rellenar tu solicitud.',
             components: [new ActionRowBuilder().addComponents(boton)],
@@ -264,7 +264,7 @@ function construirModal() {
     const cantidad = new TextInputBuilder()
         .setCustomId('cantidad')
         .setLabel('Cantidad que necesitas (€)')
-        .setPlaceholder('Minimo 500')
+        .setPlaceholder('Entre 500 y 1.000.000')
         .setStyle(TextInputStyle.Short)
         .setMaxLength(20)
         .setRequired(true);
