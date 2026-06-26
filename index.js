@@ -149,9 +149,9 @@ async function publicarBotonFijo() {
         await canal.send({
             content:
                 '**🪙 FORMULARIO DE OPERACIÓN P2P**\n\n' +
-                '**⚠️ LEE ANTES DE EMPEZAR:**\n\n' +
+                '⚠️ **Lee Antes de Empezar**:\n\n' +
                 '\\- El P2P se realiza __en persona__ y __obligatoriamente__ en Valencia, España\n' +
-                '\\- Operamos en **ambas direcciones**: Efectivo → USDT y USDT → Efectivo.\n' +
+                '\\- Operamos en __ambas direcciones__: Efectivo → USDT y USDT → Efectivo.\n' +
                 '\\- No se realizan operaciones a distancia bajo ningún concepto.\n\n' +
                 '👇 Pulsa el botón de abajo para rellenar tu solicitud',
             components: [new ActionRowBuilder().addComponents(boton)],
